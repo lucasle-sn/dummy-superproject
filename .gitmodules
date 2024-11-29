@@ -1,3 +1,3 @@
-[submodule "ext/lib-projects"]
-	path = ext/lib-projects
-	url = https://github.com/lucasle-sn/lib-project.git
+[submodule "ext/dummy_lib"]
+	path = ext/dummy_lib
+	url = git@github.com:lucasle-sn/dummy-lib.git

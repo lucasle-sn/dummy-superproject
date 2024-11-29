@@ -9,6 +9,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED     ON)
 set(CMAKE_CXX_EXTENSIONS            ON)
 
 # Add third-party libraries
-add_subdirectory(ext/lib-projects)
+add_subdirectory(ext/dummy_lib)
 
 add_subdirectory(executable)
