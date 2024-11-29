@@ -1,0 +1,3 @@
+[submodule "ext/lib-projects"]
+	path = ext/lib-projects
+	url = https://github.com/lucasle-sn/lib-project.git
