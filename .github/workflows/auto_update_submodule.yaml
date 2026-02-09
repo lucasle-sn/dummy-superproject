@@ -1,0 +1,26 @@
+name: Update Submodule on Signal
+on:
+  repository_dispatch:
+    types: [submodule_update] # Matches the event_type in Step 3
+
+jobs:
+  update-submodule:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          token: ${{ secrets.SUBMODULE_UPDATE_PAT_TOKEN }} # Use the PAT to allow pushing
+
+      - name: Pull latest submodule changes
+        run: |
+          git submodule update --remote --recursive
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.SUBMODULE_UPDATE_PAT_TOKEN }}
+          commit-message: "chore: update submodule to latest upstream"
+          title: "🤖 Submodule Update: Upstream Merged"
+          body: "This PR was automatically generated because a merge occurred in the upstream repository."
+          branch: "automation/update-submodule"

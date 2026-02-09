@@ -1,3 +1,4 @@
 [submodule "ext/dummy_lib"]
 	path = ext/dummy_lib
 	url = git@github.com:lucasle-sn/dummy-lib.git
+	branch = master
