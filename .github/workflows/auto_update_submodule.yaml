@@ -3,9 +3,6 @@
 name: Auto-update submodules
 
 on:
-  schedule:
-    # Check for updates hourly
-    - cron: '0 * * * *'
   workflow_dispatch: # Allow manual trigger
   repository_dispatch:
     types: [submodule-auto-update] # Triggered by submodule repositories
@@ -42,7 +39,11 @@ jobs:
           
           # Update each submodule to latest remote HEAD
           UPDATED_MODULES=""
-          for submodule in $SUBMODULES; do           
+          UPDATE_DETAILS=""
+          for submodule in $SUBMODULES; do
+            OLD_COMMIT=$(git -C "$submodule" rev-parse HEAD)
+            OLD_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
+            
             # Get the default branch
             DEFAULT_BRANCH=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "master")
             
@@ -50,9 +51,26 @@ jobs:
             git -C "$submodule" checkout "origin/$DEFAULT_BRANCH"
             git -C "$submodule" pull
             
+            NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
+            NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
+            
             # Track which modules were updated
-            if ! git diff --quiet "$submodule"; then
+            if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
               UPDATED_MODULES="${UPDATED_MODULES}${submodule},"
+              
+              # Get commit details
+              COMMIT_COUNT=$(git -C "$submodule" rev-list --count ${OLD_COMMIT}..${NEW_COMMIT})
+              REPO_URL=$(git -C "$submodule" config --get remote.origin.url | sed 's/\.git$//')
+              
+              # Build detailed info for each submodule
+              UPDATE_DETAILS="${UPDATE_DETAILS}
+### \`${submodule}\`
+- **Branch:** ${DEFAULT_BRANCH}
+- **Old commit:** [\`${OLD_COMMIT_SHORT}\`](${REPO_URL}/commit/${OLD_COMMIT})
+- **New commit:** [\`${NEW_COMMIT_SHORT}\`](${REPO_URL}/commit/${NEW_COMMIT})
+- **Commits:** ${COMMIT_COUNT} new commit(s)
+- **Compare:** [${OLD_COMMIT_SHORT}...${NEW_COMMIT_SHORT}](${REPO_URL}/compare/${OLD_COMMIT}...${NEW_COMMIT})
+"
             fi
           done
           
@@ -63,6 +81,10 @@ jobs:
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "updated_modules=${UPDATED_MODULES%,}" >> $GITHUB_OUTPUT
+            # Use delimiter for multiline output
+            echo "update_details<<EOF" >> $GITHUB_OUTPUT
+            echo "$UPDATE_DETAILS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
           fi
 
       - name: Create Pull Request
@@ -77,11 +99,15 @@ jobs:
           body: |
             ## Automated Submodule Update
             
-            This PR updates the following submodules to their latest versions:
+            This PR updates the following submodules to their latest versions.
             
-            **Updated modules:** ${{ steps.update.outputs.updated_modules }}
+            ${{ steps.update.outputs.update_details }}
             
-            Please review and merge if tests pass.
+            ---
+            
+            **Summary:** Updated `${{ steps.update.outputs.updated_modules }}`
+            
+            Please review the changes and merge if tests pass.
           labels: |
             dependencies
             automated
