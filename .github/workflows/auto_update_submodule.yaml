@@ -1,7 +1,6 @@
-# Template workflow for downstream repositories
-# Copy this file to your downstream repo at: .github/workflows/auto-update-dummy-lib.yaml
+# Workflow to automatically update all submodules
 
-name: Auto-update dummy-lib submodule
+name: Auto-update submodules
 
 on:
   schedule:
@@ -27,21 +26,41 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Update dummy-lib submodule
+      - name: Update all submodules
         id: update
         run: |
-          # Update the submodule to latest master
-          git -C ext/dummy_lib checkout origin/master
-          git -C ext/dummy_lib pull
+          # Get list of all submodules
+          SUBMODULES=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
           
-          # Check if there are changes
+          if [ -z "$SUBMODULES" ]; then
+            echo "No submodules found"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Update each submodule to latest remote HEAD
+          UPDATED_MODULES=""
+          for submodule in $SUBMODULES; do           
+            # Get the default branch
+            DEFAULT_BRANCH=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "master")
+            
+            # Fetch and checkout latest
+            git -C "$submodule" checkout "origin/$DEFAULT_BRANCH"
+            git -C "$submodule" pull
+            
+            # Track which modules were updated
+            if ! git diff --quiet "$submodule"; then
+              UPDATED_MODULES="${UPDATED_MODULES}${submodule},"
+            fi
+          done
+          
+          # Check if there are any changes
           if git diff --quiet; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "No updates available"
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            SUBMODULE_COMMIT=$(cd ext/dummy_lib && git rev-parse HEAD)
-            echo "new_commit=$SUBMODULE_COMMIT" >> $GITHUB_OUTPUT
+            echo "updated_modules=${UPDATED_MODULES%,}" >> $GITHUB_OUTPUT
           fi
 
       - name: Create Pull Request
@@ -49,16 +68,16 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: update dummy-lib submodule"
-          branch: auto-update-dummy-lib
+          commit-message: "chore: Update submodules ${{ steps.update.outputs.updated_modules }}"
+          branch: auto-update-submodules
           delete-branch: true
-          title: "chore: update dummy-lib submodule"
+          title: "chore: Update submodules ${{ steps.update.outputs.updated_modules }}"
           body: |
             ## Automated Submodule Update
             
-            This PR updates the `dummy-lib` submodule to the latest master.
+            This PR updates the following submodules to their latest versions:
             
-            **New Commit:** ${{ steps.update.outputs.new_commit }}
+            **Updated modules:** ${{ steps.update.outputs.updated_modules }}
             
             Please review and merge if tests pass.
           labels: |
