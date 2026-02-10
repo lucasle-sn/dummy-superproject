@@ -68,7 +68,64 @@ jobs:
       - name: Update all submodules
         id: update
         run: |
-          # Get list of all submodules
+          set -e
+          
+          # Function to get default branch for a submodule
+          get_default_branch() {
+            local submodule=$1
+            local branch
+            
+            branch=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+            if [ -z "$branch" ]; then
+              branch=$(git -C "$submodule" remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+            fi
+            if [ -z "$branch" ]; then
+              branch="master"
+            fi
+            echo "$branch"
+          }
+          
+          # Function to update tag-pinned submodule
+          update_tag() {
+            local submodule=$1
+            local current_tag=$2
+            local latest_tag
+            
+            latest_tag=$(git -C "$submodule" tag --sort=-version:refname | head -n1)
+            
+            if [ "$current_tag" != "$latest_tag" ]; then
+              echo "Updating $submodule: $current_tag → $latest_tag"
+              git -C "$submodule" checkout "tags/$latest_tag"
+              echo "$latest_tag (tag)"
+              return 0
+            else
+              echo "Already at latest tag $current_tag"
+              return 1
+            fi
+          }
+          
+          # Function to update branch-tracking submodule
+          update_branch() {
+            local submodule=$1
+            local branch
+            
+            branch=$(get_default_branch "$submodule")
+            echo "Updating $submodule to latest $branch"
+            git -C "$submodule" checkout "origin/$branch"
+            echo "$branch"
+          }
+          
+          # Function to build update details
+          build_update_info() {
+            local submodule=$1
+            local old_commit=$2
+            local new_commit=$3
+            local repo_url=$4
+            
+            echo "- **${submodule}:** [${old_commit}](${repo_url}/commit/${old_commit}) → [${new_commit}](${repo_url}/commit/${new_commit})"
+          }
+          
+          # Main logic
           SUBMODULES=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
           
           if [ -z "$SUBMODULES" ]; then
@@ -77,74 +134,45 @@ jobs:
             exit 0
           fi
           
-          # Update each submodule to latest remote HEAD
           UPDATED_MODULES=""
           UPDATE_DETAILS=""
+          
           for submodule in $SUBMODULES; do
+            echo "Processing $submodule..."
+            
             OLD_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             OLD_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
             
-            # Fetch first to ensure we have latest refs
             git -C "$submodule" fetch origin --tags
             
-            # Check if current HEAD is a tag
+            # Check if pinned to a tag
             CURRENT_TAG=$(git -C "$submodule" describe --exact-match --tags HEAD 2>/dev/null || echo "")
             
             if [ -n "$CURRENT_TAG" ]; then
-              echo "Submodule $submodule is at tag $CURRENT_TAG - checking for newer tags"
-              
-              # Get the latest tag
-              LATEST_TAG=$(git -C "$submodule" tag --sort=-version:refname | head -n1)
-              
-              if [ "$CURRENT_TAG" != "$LATEST_TAG" ]; then
-                echo "Updating from $CURRENT_TAG to $LATEST_TAG"
-                git -C "$submodule" checkout "tags/$LATEST_TAG"
-                DEFAULT_BRANCH="$LATEST_TAG (tag)"
-              else
-                echo "Already at latest tag $CURRENT_TAG - skipping"
-                continue
-              fi
+              update_tag "$submodule" "$CURRENT_TAG" || continue
             else
-              # Get the default branch - try multiple methods
-              DEFAULT_BRANCH=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-              if [ -z "$DEFAULT_BRANCH" ]; then
-                # Try to get from remote
-                DEFAULT_BRANCH=$(git -C "$submodule" remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
-              fi
-              if [ -z "$DEFAULT_BRANCH" ]; then
-                # Fallback to master
-                DEFAULT_BRANCH="master"
-              fi
-              
-              # Checkout latest branch
-              git -C "$submodule" checkout "origin/$DEFAULT_BRANCH"
+              update_branch "$submodule"
             fi
             
             NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
             
-            # Track which modules were updated
+            # Check if anything changed
             if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
               UPDATED_MODULES="${UPDATED_MODULES}${submodule},"
-              
-              # Get commit details
               REPO_URL=$(git -C "$submodule" config --get remote.origin.url | sed 's/\.git$//')
-              
-              # Build detailed info for each submodule
-              UPDATE_DETAILS="${UPDATE_DETAILS}
-          - **${submodule}:** [${OLD_COMMIT_SHORT}](${REPO_URL}/commit/${OLD_COMMIT}) → [${NEW_COMMIT_SHORT}](${REPO_URL}/commit/${NEW_COMMIT})
+              UPDATE_DETAILS="${UPDATE_DETAILS}$(build_update_info "$submodule" "$OLD_COMMIT_SHORT" "$NEW_COMMIT_SHORT" "$REPO_URL")
           "
             fi
           done
           
-          # Check if there are any changes
+          # Set outputs
           if git diff --quiet; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "No updates available"
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "updated_modules=${UPDATED_MODULES%,}" >> $GITHUB_OUTPUT
-            # Use delimiter for multiline output
             echo "update_details<<EOF" >> $GITHUB_OUTPUT
             echo "$UPDATE_DETAILS" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
