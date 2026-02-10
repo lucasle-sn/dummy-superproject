@@ -68,10 +68,10 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: Update submodules ${{ steps.update.outputs.updated_modules }}"
-          branch: auto-update-submodules
+          commit-message: "chore: Update submodule ${{ steps.update.outputs.updated_modules }}"
+          branch: submodules-auto-update-${{ github.run_id }}
           delete-branch: true
-          title: "chore: Update submodules ${{ steps.update.outputs.updated_modules }}"
+          title: "chore: Update submodule ${{ steps.update.outputs.updated_modules }}"
           body: |
             ## Automated Submodule Update
             
