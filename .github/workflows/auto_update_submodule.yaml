@@ -14,9 +14,33 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Determine target branch
+        id: target
+        run: |
+          # Check if triggered by repository_dispatch with tag or release info
+          TRIGGER_BRANCH="${{ github.event.client_payload.branch || '' }}"
+          TRIGGER_TAG="${{ github.event.client_payload.tag || '' }}"
+          
+          if [ -n "$TRIGGER_TAG" ]; then
+            # Tag trigger - target release branch if exists, else master
+            echo "Triggered by tag: $TRIGGER_TAG"
+            # Will check for release branches after checkout
+            echo "is_tag_trigger=true" >> $GITHUB_OUTPUT
+            echo "base_branch=master" >> $GITHUB_OUTPUT
+          elif [[ "$TRIGGER_BRANCH" == release/* ]]; then
+            # Release branch trigger
+            echo "Triggered by release branch: $TRIGGER_BRANCH"
+            echo "base_branch=$TRIGGER_BRANCH" >> $GITHUB_OUTPUT
+          else
+            # Default to master for main/master or manual triggers
+            echo "Triggered by master/main or manual"
+            echo "base_branch=master" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.target.outputs.base_branch }}
           submodules: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -24,6 +48,22 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Re-evaluate target for tag triggers
+        if: steps.target.outputs.is_tag_trigger == 'true'
+        id: tag_target
+        run: |
+          # Check if release branches exist
+          if git ls-remote --heads origin release/* | grep -q .; then
+            # Get the latest release branch
+            RELEASE_BRANCH=$(git ls-remote --heads origin 'release/*' | awk -F'/' '{print $NF}' | sort -V | tail -n1)
+            echo "final_branch=release/$RELEASE_BRANCH" >> $GITHUB_OUTPUT
+            # Switch to release branch
+            git fetch origin "release/$RELEASE_BRANCH"
+            git checkout "release/$RELEASE_BRANCH"
+          else
+            echo "final_branch=master" >> $GITHUB_OUTPUT
+          fi
 
       - name: Update all submodules
         id: update
@@ -44,12 +84,41 @@ jobs:
             OLD_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             OLD_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
             
-            # Get the default branch
-            DEFAULT_BRANCH=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "master")
+            # Fetch first to ensure we have latest refs
+            git -C "$submodule" fetch origin --tags
             
-            # Fetch and checkout latest
-            git -C "$submodule" checkout "origin/$DEFAULT_BRANCH"
-            git -C "$submodule" pull
+            # Check if current HEAD is a tag
+            CURRENT_TAG=$(git -C "$submodule" describe --exact-match --tags HEAD 2>/dev/null || echo "")
+            
+            if [ -n "$CURRENT_TAG" ]; then
+              echo "Submodule $submodule is at tag $CURRENT_TAG - checking for newer tags"
+              
+              # Get the latest tag
+              LATEST_TAG=$(git -C "$submodule" tag --sort=-version:refname | head -n1)
+              
+              if [ "$CURRENT_TAG" != "$LATEST_TAG" ]; then
+                echo "Updating from $CURRENT_TAG to $LATEST_TAG"
+                git -C "$submodule" checkout "tags/$LATEST_TAG"
+                DEFAULT_BRANCH="$LATEST_TAG (tag)"
+              else
+                echo "Already at latest tag $CURRENT_TAG - skipping"
+                continue
+              fi
+            else
+              # Get the default branch - try multiple methods
+              DEFAULT_BRANCH=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+              if [ -z "$DEFAULT_BRANCH" ]; then
+                # Try to get from remote
+                DEFAULT_BRANCH=$(git -C "$submodule" remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+              fi
+              if [ -z "$DEFAULT_BRANCH" ]; then
+                # Fallback to master
+                DEFAULT_BRANCH="master"
+              fi
+              
+              # Checkout latest branch
+              git -C "$submodule" checkout "origin/$DEFAULT_BRANCH"
+            fi
             
             NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
@@ -59,17 +128,11 @@ jobs:
               UPDATED_MODULES="${UPDATED_MODULES}${submodule},"
               
               # Get commit details
-              COMMIT_COUNT=$(git -C "$submodule" rev-list --count ${OLD_COMMIT}..${NEW_COMMIT})
               REPO_URL=$(git -C "$submodule" config --get remote.origin.url | sed 's/\.git$//')
               
               # Build detailed info for each submodule
               UPDATE_DETAILS="${UPDATE_DETAILS}
-          ### ${submodule}
-          - **Branch:** ${DEFAULT_BRANCH}
-          - **Old commit:** [${OLD_COMMIT_SHORT}](${REPO_URL}/commit/${OLD_COMMIT})
-          - **New commit:** [${NEW_COMMIT_SHORT}](${REPO_URL}/commit/${NEW_COMMIT})
-          - **Commits:** ${COMMIT_COUNT} new commit(s)
-          - **Compare:** [${OLD_COMMIT_SHORT}...${NEW_COMMIT_SHORT}](${REPO_URL}/compare/${OLD_COMMIT}...${NEW_COMMIT})
+          - **${submodule}:** [${OLD_COMMIT_SHORT}](${REPO_URL}/commit/${OLD_COMMIT}) → [${NEW_COMMIT_SHORT}](${REPO_URL}/commit/${NEW_COMMIT})
           "
             fi
           done
@@ -94,12 +157,15 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           branch: submodules-auto-update-${{ github.run_id }}
+          base: ${{ steps.tag_target.outputs.final_branch || steps.target.outputs.base_branch }}
           delete-branch: true
           title: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           body: |
             ## Automated Submodule Update
             
             This PR updates the following submodules to their latest versions.
+            
+            **Target branch:** `${{ steps.tag_target.outputs.final_branch || steps.target.outputs.base_branch }}`
             
             ${{ steps.update.outputs.update_details }}
             
