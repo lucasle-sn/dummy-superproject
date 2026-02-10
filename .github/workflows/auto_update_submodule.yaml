@@ -64,13 +64,13 @@ jobs:
               
               # Build detailed info for each submodule
               UPDATE_DETAILS="${UPDATE_DETAILS}
-### \`${submodule}\`
-- **Branch:** ${DEFAULT_BRANCH}
-- **Old commit:** [\`${OLD_COMMIT_SHORT}\`](${REPO_URL}/commit/${OLD_COMMIT})
-- **New commit:** [\`${NEW_COMMIT_SHORT}\`](${REPO_URL}/commit/${NEW_COMMIT})
-- **Commits:** ${COMMIT_COUNT} new commit(s)
-- **Compare:** [${OLD_COMMIT_SHORT}...${NEW_COMMIT_SHORT}](${REPO_URL}/compare/${OLD_COMMIT}...${NEW_COMMIT})
-"
+          ### ${submodule}
+          - **Branch:** ${DEFAULT_BRANCH}
+          - **Old commit:** [${OLD_COMMIT_SHORT}](${REPO_URL}/commit/${OLD_COMMIT})
+          - **New commit:** [${NEW_COMMIT_SHORT}](${REPO_URL}/commit/${NEW_COMMIT})
+          - **Commits:** ${COMMIT_COUNT} new commit(s)
+          - **Compare:** [${OLD_COMMIT_SHORT}...${NEW_COMMIT_SHORT}](${REPO_URL}/compare/${OLD_COMMIT}...${NEW_COMMIT})
+          "
             fi
           done
           
