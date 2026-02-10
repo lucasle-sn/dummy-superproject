@@ -14,35 +14,21 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Determine target branch
-        id: target
+      - name: Determine trigger
         run: |
-          # Check if triggered by repository_dispatch with tag or master branch update
+          # Log trigger information
           TRIGGER_BRANCH="${{ github.event.client_payload.branch || '' }}"
-          TRIGGER_TAG="${{ github.event.client_payload.tag || '' }}"
           
-          if [ -n "$TRIGGER_TAG" ]; then
-            # Tag trigger - target latest release/* branch
-            echo "Triggered by tag: $TRIGGER_TAG"
-            echo "trigger_tag=$TRIGGER_TAG" >> $GITHUB_OUTPUT
-            echo "is_tag_trigger=true" >> $GITHUB_OUTPUT
-            echo "base_branch=master" >> $GITHUB_OUTPUT
-          elif [[ "$TRIGGER_BRANCH" == "master" || "$TRIGGER_BRANCH" == "main" ]]; then
-            # Master/main branch update trigger - target master
+          if [[ "$TRIGGER_BRANCH" == "master" || "$TRIGGER_BRANCH" == "main" ]]; then
             echo "Triggered by master/main branch update"
-            echo "base_branch=master" >> $GITHUB_OUTPUT
-            echo "is_tag_trigger=false" >> $GITHUB_OUTPUT
           else
-            # Default to master for manual triggers
-            echo "Triggered manually or by: $TRIGGER_BRANCH"
-            echo "base_branch=master" >> $GITHUB_OUTPUT
-            echo "is_tag_trigger=false" >> $GITHUB_OUTPUT
+            echo "Triggered manually"
           fi
 
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.target.outputs.base_branch }}
+          ref: master
           submodules: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -51,97 +37,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Re-evaluate target for tag triggers
-        if: steps.target.outputs.is_tag_trigger == 'true'
-        id: tag_target
-        run: |
-          # For tag triggers, find the latest release/* branch
-          echo "Finding latest release/* branch for tag trigger: ${{ steps.target.outputs.trigger_tag }}"
-          
-          # Get all release branches
-          RELEASE_BRANCHES=$(git ls-remote --heads origin 'release/*' | awk '{print $2}' | sed 's|refs/heads/||' | sort -V)
-          
-          if [ -n "$RELEASE_BRANCHES" ]; then
-            # Get the latest release branch (sorted by version)
-            LATEST_RELEASE=$(echo "$RELEASE_BRANCHES" | tail -n1)
-            echo "Latest release branch found: $LATEST_RELEASE"
-            echo "final_branch=$LATEST_RELEASE" >> $GITHUB_OUTPUT
-            
-            # Switch to the latest release branch and sync submodules
-            git fetch origin "$LATEST_RELEASE"
-            git checkout "$LATEST_RELEASE"
-            git submodule sync --recursive
-            git submodule update --init --recursive
-          else
-            echo "No release/* branches found, falling back to master"
-            echo "final_branch=master" >> $GITHUB_OUTPUT
-          fi
-
       - name: Update all submodules
         id: update
         run: |
           set -e
-          
-          IS_TAG_TRIGGER="${{ steps.target.outputs.is_tag_trigger }}"
-          
-          # Function to get default branch for a submodule
-          get_default_branch() {
-            local submodule=$1
-            local branch
-            
-            branch=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-            if [ -z "$branch" ]; then
-              branch=$(git -C "$submodule" remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
-            fi
-            if [ -z "$branch" ]; then
-              branch="master"
-            fi
-            echo "$branch"
-          }
-          
-          # Function to update to latest tag
-          update_to_tag() {
-            local submodule=$1
-            local old_commit=$2
-            local latest_tag
-            
-            latest_tag=$(git -C "$submodule" tag --sort=-version:refname | head -n1)
-            
-            if [ -z "$latest_tag" ]; then
-              echo "No tags found for $submodule, skipping"
-              return 1
-            fi
-            
-            git -C "$submodule" checkout "tags/$latest_tag"
-            local new_commit=$(git -C "$submodule" rev-parse HEAD)
-            
-            if [ "$old_commit" != "$new_commit" ]; then
-              echo "Updated $submodule to tag $latest_tag"
-              return 0
-            else
-              echo "Already at latest tag $latest_tag"
-              return 1
-            fi
-          }
-          
-          # Function to update to latest branch commit
-          update_to_branch() {
-            local submodule=$1
-            local old_commit=$2
-            local branch
-            
-            branch=$(get_default_branch "$submodule")
-            git -C "$submodule" checkout "origin/$branch"
-            local new_commit=$(git -C "$submodule" rev-parse HEAD)
-            
-            if [ "$old_commit" != "$new_commit" ]; then
-              echo "Updated $submodule to latest $branch"
-              return 0
-            else
-              echo "Already at latest $branch"
-              return 1
-            fi
-          }
           
           # Function to normalize git URL to HTTPS format
           normalize_url() {
@@ -168,14 +67,14 @@ jobs:
           
           if [ -z "$SUBMODULES" ]; then
             echo "No submodules found"
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "submodule_has_changes=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           
           UPDATED_MODULES=""
           UPDATE_DETAILS=""
           
-          echo "Update mode: $([ "$IS_TAG_TRIGGER" == "true" ] && echo "Tag-based" || echo "Branch-based")"
+          echo "Updating all submodules to latest branch commits"
           
           for submodule in $SUBMODULES; do
             echo "Processing $submodule..."
@@ -189,26 +88,24 @@ jobs:
             OLD_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             OLD_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
             
-            git -C "$submodule" fetch origin --tags
-            
-            # Update based on trigger type
-            if [ "$IS_TAG_TRIGGER" == "true" ]; then
-              # Tag trigger: update to latest tag
-              update_to_tag "$submodule" "$OLD_COMMIT" || continue
-            else
-              # Branch trigger: update to latest branch commit
-              update_to_branch "$submodule" "$OLD_COMMIT" || continue
-            fi
+            # Fetch and checkout latest master
+            git -C "$submodule" fetch origin master
+            git -C "$submodule" checkout origin/master
             
             NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
             
-            # Build update information
-            UPDATED_MODULES="${UPDATED_MODULES}${submodule},"
-            RAW_URL=$(git -C "$submodule" config --get remote.origin.url)
-            REPO_URL=$(normalize_url "$RAW_URL")
-            UPDATE_DETAILS="${UPDATE_DETAILS}$(build_update_info "$submodule" "$OLD_COMMIT_SHORT" "$NEW_COMMIT_SHORT" "$REPO_URL")
+            # Only track if there was an actual change
+            if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
+              echo "Updated $submodule from $OLD_COMMIT_SHORT to $NEW_COMMIT_SHORT"
+              UPDATED_MODULES="${UPDATED_MODULES}${submodule},"
+              RAW_URL=$(git -C "$submodule" config --get remote.origin.url)
+              REPO_URL=$(normalize_url "$RAW_URL")
+              UPDATE_DETAILS="${UPDATE_DETAILS}$(build_update_info "$submodule" "$OLD_COMMIT_SHORT" "$NEW_COMMIT_SHORT" "$REPO_URL")
           "
+            else
+              echo "No update needed for $submodule"
+            fi
           done
           
           # Commit the submodule updates if any
@@ -216,10 +113,10 @@ jobs:
           
           # Set outputs
           if git diff --cached --quiet; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "submodule_has_changes=false" >> $GITHUB_OUTPUT
             echo "No updates available"
           else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "submodule_has_changes=true" >> $GITHUB_OUTPUT
             echo "updated_modules=${UPDATED_MODULES%,}" >> $GITHUB_OUTPUT
             echo "update_details<<EOF" >> $GITHUB_OUTPUT
             echo "$UPDATE_DETAILS" >> $GITHUB_OUTPUT
@@ -227,13 +124,13 @@ jobs:
           fi
 
       - name: Create Pull Request
-        if: steps.update.outputs.has_changes == 'true'
+        if: steps.update.outputs.submodule_has_changes == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           branch: submodules-auto-update-${{ github.run_id }}
-          base: ${{ steps.tag_target.outputs.final_branch || steps.target.outputs.base_branch }}
+          base: master
           delete-branch: true
           title: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           body: |
