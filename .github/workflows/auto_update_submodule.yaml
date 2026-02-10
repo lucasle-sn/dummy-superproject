@@ -23,6 +23,9 @@ on:
 jobs:
   update-submodule:
     runs-on: ubuntu-latest
+    env:
+      BASE_BRANCH: master
+      SUBMODULE_BASE_BRANCH_DEFAULT: master
     permissions:
       contents: write
       pull-requests: write
@@ -68,7 +71,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: ${{ env.BASE_BRANCH }}
           submodules: true
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -106,7 +109,9 @@ jobs:
           SUBMODULES=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
           UPDATE_ALL="${{ steps.trigger.outputs.update_all }}"
           TARGET_SUBMODULE="${{ steps.trigger.outputs.target_submodule }}"
-          
+
+          BASE_BRANCH="${{ env.BASE_BRANCH }}"
+
           if [ -z "$SUBMODULES" ]; then
             echo "No submodules found"
             echo "submodule_has_changes=false" >> $GITHUB_OUTPUT
@@ -117,7 +122,7 @@ jobs:
           UPDATE_DETAILS=""
           
           if [[ "$UPDATE_ALL" == "true" ]]; then
-            echo "Updating all submodules to latest master"
+            echo "Updating all submodules to latest $BASE_BRANCH"
           else
             echo "Updating only submodule: $TARGET_SUBMODULE"
           fi
@@ -140,9 +145,9 @@ jobs:
             OLD_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             OLD_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
             
-            # Fetch and checkout latest master
-            git -C "$submodule" fetch origin master
-            git -C "$submodule" checkout origin/master
+            # Fetch and checkout latest base branch
+            git -C "$submodule" fetch origin "$BASE_BRANCH"
+            git -C "$submodule" checkout "origin/$BASE_BRANCH"
             
             NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
@@ -182,7 +187,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           branch: submodules-auto-update-${{ github.run_id }}
-          base: master
+          base: ${{ env.BASE_BRANCH }}
           delete-branch: true
           title: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           body: |
