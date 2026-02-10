@@ -167,11 +167,13 @@ jobs:
             
             **Target branch:** `${{ steps.tag_target.outputs.final_branch || steps.target.outputs.base_branch }}`
             
-            ${{ steps.update.outputs.update_details }}
-            
             ---
             
-            **Summary:** Updated `${{ steps.update.outputs.updated_modules }}`
+            **Summary:**
+
+            ${{ steps.update.outputs.update_details }}
+
+            ---
             
             Please review the changes and merge if tests pass.
           labels: |
