@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Monitor and update git submodules
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "00:00"
+      timezone: "UTC"
+    # Create PRs for submodule updates
+    open-pull-requests-limit: 5
+    # Group all submodule updates into a single PR
+    groups:
+      submodules:
+        patterns:
+          - "*"
+    # PR settings
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "submodules"
+      - "automated"
+    # Optional: target specific branch
+    target-branch: "master"
