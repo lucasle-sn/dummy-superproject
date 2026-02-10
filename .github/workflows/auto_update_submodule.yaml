@@ -8,7 +8,7 @@ on:
     - cron: '0 * * * *'
   workflow_dispatch: # Allow manual trigger
   repository_dispatch:
-    types: [submodule-update] # Triggered by submodule repositories
+    types: [submodule-auto-update] # Triggered by submodule repositories
 
 jobs:
   update-submodule:
@@ -70,10 +70,10 @@ jobs:
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: Update submodule ${{ steps.update.outputs.updated_modules }}"
+          commit-message: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           branch: submodules-auto-update-${{ github.run_id }}
           delete-branch: true
-          title: "chore: Update submodule ${{ steps.update.outputs.updated_modules }}"
+          title: "chore: Auto update submodule ${{ steps.update.outputs.updated_modules }}"
           body: |
             ## Automated Submodule Update
             
