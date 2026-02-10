@@ -12,6 +12,9 @@ on:
 jobs:
   update-submodule:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,8 +31,8 @@ jobs:
         id: update
         run: |
           # Update the submodule to latest master
-          git -C ext/dummy_lib fetch
           git -C ext/dummy_lib checkout origin/master
+          git -C ext/dummy_lib pull
           
           # Check if there are changes
           if git diff --quiet; then
@@ -45,6 +48,7 @@ jobs:
         if: steps.update.outputs.has_changes == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore: update dummy-lib submodule"
           branch: auto-update-dummy-lib
           delete-branch: true
