@@ -28,7 +28,7 @@ jobs:
         id: update
         run: |
           # Update the submodule to latest master
-          git submodule update --remote --merge ext/dummy-lib
+          git submodule update --remote --merge ext/dummy_lib
           
           # Check if there are changes
           if git diff --quiet; then
@@ -36,7 +36,7 @@ jobs:
             echo "No updates available"
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            SUBMODULE_COMMIT=$(cd ext/dummy-lib && git rev-parse HEAD)
+            SUBMODULE_COMMIT=$(cd ext/dummy_lib && git rev-parse HEAD)
             echo "new_commit=$SUBMODULE_COMMIT" >> $GITHUB_OUTPUT
           fi
 
