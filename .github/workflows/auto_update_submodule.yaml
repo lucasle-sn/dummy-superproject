@@ -28,7 +28,8 @@ jobs:
         id: update
         run: |
           # Update the submodule to latest master
-          git submodule update --remote --merge ext/dummy_lib
+          git -C ext/dummy_lib fetch
+          git -C ext/dummy_lib checkout origin/master
           
           # Check if there are changes
           if git diff --quiet; then
