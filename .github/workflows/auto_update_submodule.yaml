@@ -4,6 +4,19 @@ name: Auto-update submodules
 
 on:
   workflow_dispatch: # Allow manual trigger
+    inputs:
+      update_all:
+        description: 'Update all submodules'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      target_submodule:
+        description: 'Specific submodule to update (if update_all is false)'
+        required: false
+        type: string
   repository_dispatch:
     types: [submodule-auto-update] # Triggered by submodule repositories
 
@@ -15,15 +28,42 @@ jobs:
       pull-requests: write
     steps:
       - name: Determine trigger
+        id: trigger
         run: |
-          # Log trigger information
-          TRIGGER_BRANCH="${{ github.event.client_payload.branch || '' }}"
-          
-          if [[ "$TRIGGER_BRANCH" == "master" || "$TRIGGER_BRANCH" == "main" ]]; then
-            echo "Triggered by master/main branch update"
-          else
+          # Determine trigger type and parameters
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Manual trigger - use inputs
             echo "Triggered manually"
+            UPDATE_ALL="${{ inputs.update_all }}"
+            TARGET_SUBMODULE="${{ inputs.target_submodule }}"
+          else
+            # Repository dispatch - always single submodule update
+            echo "Triggered by repository dispatch"
+            TRIGGER_BRANCH="${{ github.event.client_payload.branch || '' }}"
+            TARGET_SUBMODULE="${{ github.event.client_payload.submodule || '' }}"
+            UPDATE_ALL="false"
+            
+            if [[ "$TRIGGER_BRANCH" == "master" || "$TRIGGER_BRANCH" == "main" ]]; then
+              echo "Source: master/main branch update"
+            fi
+            
+            if [[ -z "$TARGET_SUBMODULE" ]]; then
+              echo "ERROR: No submodule specified in repository_dispatch payload"
+              exit 1
+            fi
           fi
+          
+          if [[ "$UPDATE_ALL" == "true" ]]; then
+            echo "Mode: Update all submodules"
+          elif [[ -n "$TARGET_SUBMODULE" ]]; then
+            echo "Mode: Update only $TARGET_SUBMODULE"
+          else
+            echo "ERROR: update_all is false but no target_submodule provided"
+            exit 1
+          fi
+          
+          echo "update_all=$UPDATE_ALL" >> $GITHUB_OUTPUT
+          echo "target_submodule=$TARGET_SUBMODULE" >> $GITHUB_OUTPUT
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -64,6 +104,8 @@ jobs:
           
           # Main logic
           SUBMODULES=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
+          UPDATE_ALL="${{ steps.trigger.outputs.update_all }}"
+          TARGET_SUBMODULE="${{ steps.trigger.outputs.target_submodule }}"
           
           if [ -z "$SUBMODULES" ]; then
             echo "No submodules found"
@@ -74,9 +116,19 @@ jobs:
           UPDATED_MODULES=""
           UPDATE_DETAILS=""
           
-          echo "Updating all submodules to latest branch commits"
+          if [[ "$UPDATE_ALL" == "true" ]]; then
+            echo "Updating all submodules to latest master"
+          else
+            echo "Updating only submodule: $TARGET_SUBMODULE"
+          fi
           
           for submodule in $SUBMODULES; do
+            # Skip if not updating all and this isn't the target submodule
+            if [[ "$UPDATE_ALL" != "true" && "$submodule" != "$TARGET_SUBMODULE" ]]; then
+              echo "Skipping $submodule (not the target submodule)"
+              continue
+            fi
+            
             echo "Processing $submodule..."
             
             # Validate submodule directory exists
