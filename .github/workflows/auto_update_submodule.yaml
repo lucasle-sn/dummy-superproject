@@ -7,6 +7,8 @@ on:
     # Check for updates hourly
     - cron: '0 * * * *'
   workflow_dispatch: # Allow manual trigger
+  repository_dispatch:
+    types: [submodule-update] # Triggered by submodule repositories
 
 jobs:
   update-submodule:
