@@ -133,7 +133,7 @@ jobs:
             else
               # Extract owner/repo from full URL
               # Matches: https://github.com/owner/repo or git@github.com:owner/repo
-              echo "$url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|'
+              echo "$url" | sed -E 's|^.*github\.com[:/](.+)$|\1|'
             fi
           }
           
