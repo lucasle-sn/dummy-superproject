@@ -124,16 +124,16 @@ jobs:
           extract_repo_identifier() {
             local url=$1
             
-            # First remove .git suffix if present
-            url=$(echo "$url" | sed 's/\.git$//')
+            # 1. Strip the .git suffix (if it exists)
+            url="${url%.git}"
             
-            # If it's already in owner/repo format (no slashes before owner), return as-is
-            if [[ "$url" =~ ^[^/]+/[^/]+$ ]]; then
+            # 2. Check if it's already in owner/repo format
+            if [[ "$url" =~ ^[^/:]+/[^/:]+$ ]]; then
               echo "$url"
             else
-              # Extract owner/repo from full URL
-              # Matches: https://github.com/owner/repo or git@github.com:owner/repo
-              echo "$url" | sed -E 's|^.*github\.com[:/](.+)$|\1|'
+              # 3. Extract owner/repo using a more specific regex
+              # This looks for everything after the last ':' (SSH) or 'github.com/' (HTTPS)
+              echo "$url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|'
             fi
           }
           
