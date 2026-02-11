@@ -123,13 +123,17 @@ jobs:
           # Function to extract owner/repo from URL or return as-is if already in that format
           extract_repo_identifier() {
             local url=$1
+            
+            # First remove .git suffix if present
+            url=$(echo "$url" | sed 's/\.git$//')
+            
             # If it's already in owner/repo format (no slashes before owner), return as-is
             if [[ "$url" =~ ^[^/]+/[^/]+$ ]]; then
               echo "$url"
             else
               # Extract owner/repo from full URL
               # Matches: https://github.com/owner/repo or git@github.com:owner/repo
-              echo "$url" | sed -E 's|.*[:/]([^/]+/[^/]+).*|\1|'
+              echo "$url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|'
             fi
           }
           
