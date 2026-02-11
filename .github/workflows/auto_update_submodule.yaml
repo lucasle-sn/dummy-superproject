@@ -39,6 +39,7 @@ jobs:
             echo "Triggered manually"
             UPDATE_ALL="${{ inputs.update_all }}"
             TARGET_SUBMODULE="${{ inputs.target_submodule }}"
+            SUBMODULE_BRANCH=""  # Will be detected dynamically per submodule
           else
             # Repository dispatch - always single submodule update
             echo "Triggered by repository dispatch"
@@ -46,8 +47,13 @@ jobs:
             TARGET_SUBMODULE="${{ github.event.client_payload.submodule || '' }}"
             UPDATE_ALL="false"
             
-            if [[ "$TRIGGER_BRANCH" == "master" || "$TRIGGER_BRANCH" == "main" ]]; then
-              echo "Source: master/main branch update"
+            # Use branch from payload or default to ${{ env.SUBMODULE_BASE_BRANCH_DEFAULT }}
+            if [[ -n "$TRIGGER_BRANCH" ]]; then
+              SUBMODULE_BRANCH="$TRIGGER_BRANCH"
+              echo "Submodule branch from payload: $SUBMODULE_BRANCH"
+            else
+              SUBMODULE_BRANCH="${{ env.SUBMODULE_BASE_BRANCH_DEFAULT }}"
+              echo "Using default submodule branch: ${SUBMODULE_BRANCH}"
             fi
             
             if [[ -z "$TARGET_SUBMODULE" ]]; then
@@ -67,6 +73,7 @@ jobs:
           
           echo "update_all=$UPDATE_ALL" >> $GITHUB_OUTPUT
           echo "target_submodule=$TARGET_SUBMODULE" >> $GITHUB_OUTPUT
+          echo "submodule_branch=$SUBMODULE_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -84,6 +91,24 @@ jobs:
         id: update
         run: |
           set -e
+          
+          # Function to get default branch for a submodule
+          get_default_branch() {
+            local submodule=$1
+            local branch
+            
+            # Try to get the default branch from symbolic-ref
+            branch=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+            if [ -z "$branch" ]; then
+              # Fallback to remote show origin
+              branch=$(git -C "$submodule" remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
+            fi
+            if [ -z "$branch" ]; then
+              # Final fallback
+              branch=${{ env.SUBMODULE_BASE_BRANCH_DEFAULT }}
+            fi
+            echo "$branch"
+          }
           
           # Function to normalize git URL to HTTPS format
           normalize_url() {
@@ -109,6 +134,7 @@ jobs:
           SUBMODULES=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
           UPDATE_ALL="${{ steps.trigger.outputs.update_all }}"
           TARGET_SUBMODULE="${{ steps.trigger.outputs.target_submodule }}"
+          SUBMODULE_BRANCH="${{ steps.trigger.outputs.submodule_branch }}"
 
           BASE_BRANCH="${{ env.BASE_BRANCH }}"
 
@@ -122,9 +148,9 @@ jobs:
           UPDATE_DETAILS=""
           
           if [[ "$UPDATE_ALL" == "true" ]]; then
-            echo "Updating all submodules to latest $BASE_BRANCH"
+            echo "Updating all submodules (will detect default branches)"
           else
-            echo "Updating only submodule: $TARGET_SUBMODULE"
+            echo "Updating only submodule: $TARGET_SUBMODULE to ${SUBMODULE_BRANCH:-default branch}"
           fi
           
           for submodule in $SUBMODULES; do
@@ -145,9 +171,20 @@ jobs:
             OLD_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             OLD_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
             
-            # Fetch and checkout latest base branch
-            git -C "$submodule" fetch origin "$BASE_BRANCH"
-            git -C "$submodule" checkout "origin/$BASE_BRANCH"
+            # Determine which branch to use
+            if [[ -z "$SUBMODULE_BRANCH" ]]; then
+              # No branch specified - detect the actual default branch
+              BRANCH_TO_USE=$(get_default_branch "$submodule")
+              echo "Detected default branch for $submodule: $BRANCH_TO_USE"
+            else
+              # Use specified branch from payload
+              BRANCH_TO_USE="$SUBMODULE_BRANCH"
+              echo "Using specified branch for $submodule: $BRANCH_TO_USE"
+            fi
+            
+            # Fetch and checkout latest submodule branch
+            git -C "$submodule" fetch origin "$BRANCH_TO_USE"
+            git -C "$submodule" checkout "origin/$BRANCH_TO_USE"
             
             NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
