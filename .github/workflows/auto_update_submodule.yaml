@@ -173,18 +173,14 @@ jobs:
             
             # Determine which branch to use
             if [[ -z "$SUBMODULE_BRANCH" ]]; then
-              # No branch specified - detect the actual default branch
-              BRANCH_TO_USE=$(get_default_branch "$submodule")
-              echo "Detected default branch for $submodule: $BRANCH_TO_USE"
-            else
-              # Use specified branch from payload
-              BRANCH_TO_USE="$SUBMODULE_BRANCH"
-              echo "Using specified branch for $submodule: $BRANCH_TO_USE"
+              # For update all with default, detect the actual default branch
+              SUBMODULE_BRANCH=$(get_default_branch "$submodule")
+              echo "Detected default branch for $submodule: $SUBMODULE_BRANCH"
             fi
             
             # Fetch and checkout latest submodule branch
-            git -C "$submodule" fetch origin "$BRANCH_TO_USE"
-            git -C "$submodule" checkout "origin/$BRANCH_TO_USE"
+            git -C "$submodule" fetch origin "$SUBMODULE_BRANCH"
+            git -C "$submodule" checkout "origin/$SUBMODULE_BRANCH"
             
             NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
             NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
