@@ -120,6 +120,19 @@ jobs:
             echo "$url"
           }
           
+          # Function to extract owner/repo from URL or return as-is if already in that format
+          extract_repo_identifier() {
+            local url=$1
+            # If it's already in owner/repo format (no slashes before owner), return as-is
+            if [[ "$url" =~ ^[^/]+/[^/]+$ ]]; then
+              echo "$url"
+            else
+              # Extract owner/repo from full URL
+              # Matches: https://github.com/owner/repo or git@github.com:owner/repo
+              echo "$url" | sed -E 's|.*[:/]([^/]+/[^/]+).*|\1|'
+            fi
+          }
+          
           # Function to build update details
           build_update_info() {
             local submodule=$1
@@ -144,20 +157,35 @@ jobs:
             exit 0
           fi
           
+          # Normalize TARGET_SUBMODULE URL for comparison
+          TARGET_REPO_ID=""
+          if [[ -n "$TARGET_SUBMODULE" ]]; then
+            TARGET_REPO_ID=$(extract_repo_identifier "$TARGET_SUBMODULE")
+            echo "Target repository identifier: $TARGET_REPO_ID"
+          fi
+          
           UPDATED_MODULES=""
           UPDATE_DETAILS=""
           
           if [[ "$UPDATE_ALL" == "true" ]]; then
             echo "Updating all submodules (will detect default branches)"
           else
-            echo "Updating only submodule: $TARGET_SUBMODULE to ${SUBMODULE_BRANCH:-default branch}"
+            echo "Updating only submodule matching: $TARGET_REPO_ID to ${SUBMODULE_BRANCH:-default branch}"
           fi
           
           for submodule in $SUBMODULES; do
             # Skip if not updating all and this isn't the target submodule
-            if [[ "$UPDATE_ALL" != "true" && "$submodule" != "$TARGET_SUBMODULE" ]]; then
-              echo "Skipping $submodule (not the target submodule)"
-              continue
+            if [[ "$UPDATE_ALL" != "true" ]]; then
+              # Get this submodule's URL and extract repo identifier
+              SUBMODULE_URL=$(git config --file .gitmodules --get "submodule.$submodule.url")
+              SUBMODULE_REPO_ID=$(extract_repo_identifier "$SUBMODULE_URL")
+              
+              # Compare repo identifiers (owner/repo format)
+              if [[ "$SUBMODULE_REPO_ID" != "$TARGET_REPO_ID" ]]; then
+                echo "Skipping $submodule (repo: $SUBMODULE_REPO_ID does not match target: $TARGET_REPO_ID)"
+                continue
+              fi
+              echo "Matched target submodule: $submodule"
             fi
             
             echo "Processing $submodule..."
