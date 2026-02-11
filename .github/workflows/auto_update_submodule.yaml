@@ -14,7 +14,7 @@ on:
           - 'true'
           - 'false'
       target_submodule:
-        description: 'Specific submodule to update (if update_all is false)'
+        description: 'Specific submodule to update (URL)'
         required: false
         type: string
   repository_dispatch:
@@ -35,45 +35,43 @@ jobs:
         run: |
           # Determine trigger type and parameters
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            # Manual trigger - use inputs
             echo "Triggered manually"
-            UPDATE_ALL="${{ inputs.update_all }}"
-            TARGET_SUBMODULE="${{ inputs.target_submodule }}"
-            SUBMODULE_BRANCH=""  # Will be detected dynamically per submodule
+            updateAll="${{ inputs.update_all }}"
+            targetSubmodule="${{ inputs.target_submodule }}"
+            targetSubmoduleBranch=""  # Will be detected dynamically per submodule
           else
-            # Repository dispatch - always single submodule update
             echo "Triggered by repository dispatch"
-            TRIGGER_BRANCH="${{ github.event.client_payload.branch || '' }}"
-            TARGET_SUBMODULE="${{ github.event.client_payload.submodule || '' }}"
-            UPDATE_ALL="false"
+            triggerBranch="${{ github.event.client_payload.branch || '' }}"
+            targetSubmodule="${{ github.event.client_payload.submodule || '' }}"
+            updateAll="false"
             
             # Use branch from payload or default to ${{ env.SUBMODULE_BASE_BRANCH_DEFAULT }}
-            if [[ -n "$TRIGGER_BRANCH" ]]; then
-              SUBMODULE_BRANCH="$TRIGGER_BRANCH"
-              echo "Submodule branch from payload: $SUBMODULE_BRANCH"
+            if [[ -n "$triggerBranch" ]]; then
+              targetSubmoduleBranch="$triggerBranch"
+              echo "Submodule branch from payload: $targetSubmoduleBranch"
             else
-              SUBMODULE_BRANCH="${{ env.SUBMODULE_BASE_BRANCH_DEFAULT }}"
-              echo "Using default submodule branch: ${SUBMODULE_BRANCH}"
+              targetSubmoduleBranch="${{ env.SUBMODULE_BASE_BRANCH_DEFAULT }}"
+              echo "Using default submodule branch: ${targetSubmoduleBranch}"
             fi
             
-            if [[ -z "$TARGET_SUBMODULE" ]]; then
+            if [[ -z "$targetSubmodule" ]]; then
               echo "ERROR: No submodule specified in repository_dispatch payload"
               exit 1
             fi
           fi
           
-          if [[ "$UPDATE_ALL" == "true" ]]; then
+          if [[ "$updateAll" == "true" ]]; then
             echo "Mode: Update all submodules"
-          elif [[ -n "$TARGET_SUBMODULE" ]]; then
-            echo "Mode: Update only $TARGET_SUBMODULE"
+          elif [[ -n "$targetSubmodule" ]]; then
+            echo "Mode: Update only $targetSubmodule"
           else
             echo "ERROR: update_all is false but no target_submodule provided"
             exit 1
           fi
           
-          echo "update_all=$UPDATE_ALL" >> $GITHUB_OUTPUT
-          echo "target_submodule=$TARGET_SUBMODULE" >> $GITHUB_OUTPUT
-          echo "submodule_branch=$SUBMODULE_BRANCH" >> $GITHUB_OUTPUT
+          echo "update_all=$updateAll" >> $GITHUB_OUTPUT
+          echo "target_submodule=$targetSubmodule" >> $GITHUB_OUTPUT
+          echo "target_submodule_branch=$targetSubmoduleBranch" >> $GITHUB_OUTPUT
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -97,44 +95,38 @@ jobs:
             local submodule=$1
             local branch
             
-            # Try to get the default branch from symbolic-ref
             branch=$(git -C "$submodule" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
             if [ -z "$branch" ]; then
               # Fallback to remote show origin
               branch=$(git -C "$submodule" remote show origin 2>/dev/null | grep 'HEAD branch' | cut -d' ' -f5)
             fi
             if [ -z "$branch" ]; then
-              # Final fallback
               branch=${{ env.SUBMODULE_BASE_BRANCH_DEFAULT }}
             fi
             echo "$branch"
-          }
-          
-          # Function to normalize git URL to HTTPS format
-          normalize_url() {
-            local url=$1
-            # Remove .git suffix
-            url=$(echo "$url" | sed 's/\.git$//')
-            # Convert SSH to HTTPS
-            url=$(echo "$url" | sed 's|git@github.com:|https://github.com/|')
-            echo "$url"
           }
           
           # Function to extract owner/repo from URL or return as-is if already in that format
           extract_repo_identifier() {
             local url=$1
             
-            # 1. Strip the .git suffix (if it exists)
-            url="${url%.git}"
-            
-            # 2. Check if it's already in owner/repo format
+            url="${url%.git}"            
             if [[ "$url" =~ ^[^/:]+/[^/:]+$ ]]; then
+              #Check if it's already in owner/repo format  
               echo "$url"
             else
-              # 3. Extract owner/repo using a more specific regex
-              # This looks for everything after the last ':' (SSH) or 'github.com/' (HTTPS)
+              # Looks for everything after the last ':' (SSH) or 'github.com/' (HTTPS)
               echo "$url" | sed -E 's|.*[:/]([^/]+/[^/]+)$|\1|'
             fi
+          }
+
+          # Function to normalize git URL to HTTPS format
+          normalize_git_url() {
+            # Convert SSH to HTTPS
+            local url=$1
+            url=$(echo "$url" | sed 's/\.git$//')
+            url=$(echo "$url" | sed 's|git@github.com:|https://github.com/|')
+            echo "$url"
           }
           
           # Function to build update details
@@ -148,48 +140,49 @@ jobs:
           }
           
           # Main logic
-          SUBMODULES=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
-          UPDATE_ALL="${{ steps.trigger.outputs.update_all }}"
-          TARGET_SUBMODULE="${{ steps.trigger.outputs.target_submodule }}"
-          SUBMODULE_BRANCH="${{ steps.trigger.outputs.submodule_branch }}"
+          submodules=$(git config --file .gitmodules --get-regexp path | awk '{ print $2 }')
+          updateAll="${{ steps.trigger.outputs.update_all }}"
+          targetSubmodule="${{ steps.trigger.outputs.target_submodule }}"
+          targetSubmoduleBranch="${{ steps.trigger.outputs.target_submodule_branch }}"
 
-          BASE_BRANCH="${{ env.BASE_BRANCH }}"
+          if [[ $updateAll != "true" && -z "$targetSubmodule" ]]; then
+            echo "ERROR: update_all is false but no target_submodule provided"
+            exit 1
+          fi
 
-          if [ -z "$SUBMODULES" ]; then
-            echo "No submodules found"
+          if [ -z "$submodules" ]; then
+            echo "WARNING: No submodules found"
             echo "submodule_has_changes=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          # Normalize TARGET_SUBMODULE URL for comparison
-          TARGET_REPO_ID=""
-          if [[ -n "$TARGET_SUBMODULE" ]]; then
-            TARGET_REPO_ID=$(extract_repo_identifier "$TARGET_SUBMODULE")
-            echo "Target repository identifier: $TARGET_REPO_ID"
+          # Normalize targetSubmodule URL for comparison
+          if [[ $updateAll != "true" ]]; then
+            targetRepoId=$(normalize_git_url "$targetSubmodule")
+            echo "Target repository identifier: $targetRepoId"
           fi
           
-          UPDATED_MODULES=""
-          UPDATE_DETAILS=""
+          updatedModules=""
+          updateDetails=""
           
-          if [[ "$UPDATE_ALL" == "true" ]]; then
+          if [[ "$updateAll" == "true" ]]; then
             echo "Updating all submodules (will detect default branches)"
           else
-            echo "Updating only submodule matching: $TARGET_REPO_ID to ${SUBMODULE_BRANCH:-default branch}"
+            echo "Updating only submodule matching: $targetRepoId to ${targetSubmoduleBranch:-default branch}"
           fi
           
-          for submodule in $SUBMODULES; do
+          for submodule in $submodules; do
             # Skip if not updating all and this isn't the target submodule
-            if [[ "$UPDATE_ALL" != "true" ]]; then
+            if [[ "$updateAll" != "true" ]]; then
               # Get this submodule's URL and extract repo identifier
-              SUBMODULE_URL=$(git config --file .gitmodules --get "submodule.$submodule.url")
-              SUBMODULE_REPO_ID=$(extract_repo_identifier "$SUBMODULE_URL")
+              submoduleUrl=$(git config --file .gitmodules --get "submodule.$submodule.url")
+              submoduleRepoId=$(extract_repo_identifier "$submoduleUrl")
               
               # Compare repo identifiers (owner/repo format)
-              if [[ "$SUBMODULE_REPO_ID" != "$TARGET_REPO_ID" ]]; then
-                echo "Skipping $submodule (repo: $SUBMODULE_REPO_ID does not match target: $TARGET_REPO_ID)"
+              if [[ "$submoduleRepoId" != "$targetRepoId" ]]; then
+                echo "Skipping $submodule ($submoduleRepoId): does not match target $targetRepoId)"
                 continue
               fi
-              echo "Matched target submodule: $submodule"
             fi
             
             echo "Processing $submodule..."
@@ -200,30 +193,29 @@ jobs:
               continue
             fi
             
-            OLD_COMMIT=$(git -C "$submodule" rev-parse HEAD)
-            OLD_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
+            oldCommit=$(git -C "$submodule" rev-parse HEAD)
+            oldCommitShort=$(git -C "$submodule" rev-parse --short HEAD)
             
             # Determine which branch to use
-            if [[ -z "$SUBMODULE_BRANCH" ]]; then
+            if [[ -z "$targetSubmoduleBranch" ]]; then
               # For update all with default, detect the actual default branch
-              SUBMODULE_BRANCH=$(get_default_branch "$submodule")
-              echo "Detected default branch for $submodule: $SUBMODULE_BRANCH"
+              targetSubmoduleBranch=$(get_default_branch "$submodule")
+              echo "Detected default branch for $submodule: $targetSubmoduleBranch"
             fi
             
             # Fetch and checkout latest submodule branch
-            git -C "$submodule" fetch origin "$SUBMODULE_BRANCH"
-            git -C "$submodule" checkout "origin/$SUBMODULE_BRANCH"
+            git -C "$submodule" fetch origin "$targetSubmoduleBranch"
+            git -C "$submodule" checkout "origin/$targetSubmoduleBranch"
             
-            NEW_COMMIT=$(git -C "$submodule" rev-parse HEAD)
-            NEW_COMMIT_SHORT=$(git -C "$submodule" rev-parse --short HEAD)
+            newCommit=$(git -C "$submodule" rev-parse HEAD)
+            newCommitShort=$(git -C "$submodule" rev-parse --short HEAD)
             
             # Only track if there was an actual change
-            if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
-              echo "Updated $submodule from $OLD_COMMIT_SHORT to $NEW_COMMIT_SHORT"
-              UPDATED_MODULES="${UPDATED_MODULES}${submodule},"
-              RAW_URL=$(git -C "$submodule" config --get remote.origin.url)
-              REPO_URL=$(normalize_url "$RAW_URL")
-              UPDATE_DETAILS="${UPDATE_DETAILS}$(build_update_info "$submodule" "$OLD_COMMIT_SHORT" "$NEW_COMMIT_SHORT" "$REPO_URL")
+            if [ "$oldCommit" != "$newCommit" ]; then
+              echo "Updated $submodule from $oldCommitShort to $newCommitShort"
+              updatedModules="${updatedModules}${submodule},"
+              rawUrl=$(git -C "$submodule" config --get remote.origin.url)
+              updateDetails="${updateDetails}$(build_update_info "$submodule" "$oldCommitShort" "$newCommitShort" "$(normalize_git_url $rawUrl)")
           "
             else
               echo "No update needed for $submodule"
@@ -239,9 +231,9 @@ jobs:
             echo "No updates available"
           else
             echo "submodule_has_changes=true" >> $GITHUB_OUTPUT
-            echo "updated_modules=${UPDATED_MODULES%,}" >> $GITHUB_OUTPUT
+            echo "updated_modules=${updatedModules%,}" >> $GITHUB_OUTPUT
             echo "update_details<<EOF" >> $GITHUB_OUTPUT
-            echo "$UPDATE_DETAILS" >> $GITHUB_OUTPUT
+            echo "$updateDetails" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           fi
 
